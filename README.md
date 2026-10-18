@@ -64,4 +64,4 @@ Build and run instructions will be added once the project skeleton is in place.
 
 ## License
 
-TBD
+[MIT](LICENSE)
