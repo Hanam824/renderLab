@@ -89,7 +89,7 @@ shaders and build the Metal pipeline. They skip themselves when no GPU is availa
 
 GitHub Actions (`.github/workflows/`) runs two workflows:
 
-- **CI** (`ci.yml`) runs on every pull request to `main` and every push to `main`. It runs the
+- **CI** (`ci.yml`) runs on every pull request to `main`, not again after the merge. It runs the
   system check, a debug build, the tests and a release build, in parallel on an Apple Silicon
   runner (`macos-26`) and an Intel runner (`macos-15-intel`). Doc-only changes (Markdown files,
   `doc/`, `docs/`, `LICENSE`) skip the build: a quick check job sees that only docs changed.

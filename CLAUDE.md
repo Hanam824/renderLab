@@ -54,7 +54,7 @@ Verify rendering with `--frames N` on both backends. Screen capture isn't availa
 
 ## CI and releases
 
-- `.github/workflows/ci.yml`: on PRs to main and pushes to main. It's a matrix of `macos-26` (arm64) and `macos-15-intel` (x86_64) with the latest stable Xcode, and `fail-fast` off. Each runs doctor --quick, a debug build, `swift test` and a release build. On the runners, Metal tests run but OpenGL tests skip themselves (no GL context in the VM).
+- `.github/workflows/ci.yml`: on PRs to main only (and manual runs). Merging doesn't build again; there is no `push` trigger. It's a matrix of `macos-26` (arm64) and `macos-15-intel` (x86_64) with the latest stable Xcode, and `fail-fast` off. Each runs doctor --quick, a debug build, `swift test` and a release build. On the runners, Metal tests run but OpenGL tests skip themselves (no GL context in the VM).
   - Jobs: `changes` (Ubuntu) → `build` (matrix, skipped by `if:` when only docs changed) → `CI result`.
   - `CI result` always runs and fails only if `changes` failed or `build` didn't succeed or skip. It is the **required status check** in the `main` ruleset.
   - Don't make the matrix jobs required: a skipped matrix job reports under its unexpanded name, so the check would never arrive. Don't switch back to `paths-ignore` either: a workflow that doesn't run leaves the required check pending forever.
@@ -63,6 +63,7 @@ Verify rendering with `--frames N` on both backends. Screen capture isn't availa
   - **main:** PR required (0 approvals), `CI result` required (GitHub Actions), no force push, no deletion, repository admins can bypass.
   - **release tags:** `refs/tags/v*` can't be deleted, moved or force-updated.
 - `.github/workflows/nightly-release.yml`: 17:00 UTC (00:00 Vietnam). Jobs: `check` (was a PR merged into main in the last 24 h, or a manual run with `force`) → `version` (`next-version.sh` once, plus the commit SHA) → `build` (a matrix of arm64 and x86_64 runners, each tests and runs `package-release.sh <tag> <arch>`, then uploads its zip) → `publish` (only if both builds passed: `gh release create --generate-notes` with `RenderLab-<tag>-macos-arm64.zip` and `-macos-x86_64.zip`).
+- The nightly `build` job uses cache-name `ci`, the same as CI. It runs on main, and PR caches can only be restored from main, so it's what keeps new PRs from compiling ImGui from scratch.
 - `.github/actions/swift-setup` is shared by both: Xcode selection, `scripts/ci-restore-mtimes.sh`, then `actions/cache` on `.build`. The key covers only the third-party build inputs (Xcode, ImGui submodule SHA, Package.swift, `Sources/CImGui`, `Sources/ImGuiMetal`). The mtime restore is what makes the cache work: without it a fresh checkout recompiles everything. Keep checkouts at `fetch-depth: 0` so it can find each file's last commit.
 - `next-version.sh` also says "nothing to release" when only docs changed since the last tag (via `code-changes.sh`).
 - Nightly releases always bump the patch number (v0.1.0 → v0.1.1 → … → v0.1.1000), whatever the commit types. Minor and major versions change only when a tag such as `v0.2.0` is pushed by hand; the nightly releases then continue from it.

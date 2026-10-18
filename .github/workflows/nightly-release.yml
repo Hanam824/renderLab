@@ -97,10 +97,13 @@ jobs:
           fetch-depth: 0 # full history: ci-restore-mtimes.sh needs each file's last commit
           submodules: recursive
 
+      # Same cache name as CI: this job runs on main, and pull requests can restore caches saved on
+      # main. Its .build holds the same debug and release products as a CI run, so new pull requests
+      # start with ImGui already compiled.
       - name: Set up Swift and the build cache
         uses: ./.github/actions/swift-setup
         with:
-          cache-name: release
+          cache-name: ci
 
       - name: Test
         run: swift test
