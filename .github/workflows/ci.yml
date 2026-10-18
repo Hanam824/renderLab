@@ -1,10 +1,9 @@
 name: CI
 
+# Pull requests only: merging a pull request doesn't build again, since CI already passed on it.
+# (The nightly release builds main and keeps the cache warm for new pull requests.)
 on:
   pull_request:
-    branches: [main]
-  # Builds on main keep a warm cache: a pull request can restore caches from main, not from other PRs.
-  push:
     branches: [main]
   workflow_dispatch:
 
@@ -37,18 +36,12 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          case "$EVENT" in
-            # Three dots: changes on the PR branch since it split from main.
-            pull_request) range=("$PR_BASE...HEAD") ;;
-            push) range=("$PUSH_BEFORE" HEAD) ;;
-            *) range=() ;; # manual run: always build
-          esac
-          # A brand-new branch has no "before" commit (all zeros): build.
-          if [ ${#range[@]} -eq 0 ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+          # A manual run always builds.
+          if [ "$EVENT" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
-          elif files="$(./scripts/code-changes.sh "${range[@]}")" && [ -z "$files" ]; then
+          # Three dots: the changes on the PR branch since it split from main.
+          elif files="$(./scripts/code-changes.sh "$PR_BASE...HEAD")" && [ -z "$files" ]; then
             echo "Only docs changed: skipping the build."
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
