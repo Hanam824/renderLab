@@ -85,6 +85,61 @@ shaders and build the Metal pipeline. They skip themselves when no GPU is availa
 > `no such module 'Testing'`. Fix it once with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`,
 > or per command with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`.
 
+## CI and releases
+
+GitHub Actions (`.github/workflows/`) runs two workflows:
+
+- **CI** (`ci.yml`) runs on every pull request to `main` and every push to `main`. It runs the
+  system check, a debug build, the tests and a release build, in parallel on an Apple Silicon
+  runner (`macos-26`) and an Intel runner (`macos-15-intel`). Doc-only changes (Markdown files,
+  `doc/`, `docs/`, `LICENSE`) skip the build: a quick check job sees that only docs changed.
+  The final job, **CI result**, is the check that must pass before a pull request can be merged.
+- **Nightly release** (`nightly-release.yml`) runs every day at 00:00 Vietnam time (17:00 UTC).
+  If at least one pull request was merged into `main` in the last 24 hours, it:
+  1. picks the next version tag with `scripts/next-version.sh`;
+  2. on an Apple Silicon and an Intel runner, runs the tests and builds that Mac's app with
+     `scripts/package-release.sh`;
+  3. if both builds pass, publishes a GitHub release with two zips,
+     `RenderLab-<tag>-macos-arm64.zip` (Apple Silicon) and `RenderLab-<tag>-macos-x86_64.zip` (Intel),
+     and notes generated from the merged pull requests.
+
+  If only docs changed since the last release, nothing is published.
+  Start it by hand from the Actions tab with **Run workflow**. Tick *force* to release even
+  without a merged pull request.
+
+Version tags follow [SemVer](https://semver.org) (`vMAJOR.MINOR.PATCH`). The first release is
+`v0.1.0`. Every nightly release after that adds 1 to the patch number, whatever was merged:
+`v0.1.0` → `v0.1.1` → `v0.1.2` → … → `v0.1.10` → … → `v0.1.999` → `v0.1.1000`.
+
+To move to a new minor or major version, tag it by hand, for example
+`git tag v0.2.0 && git push origin v0.2.0`. The nightly releases continue from there
+(`v0.2.1`, `v0.2.2`, …).
+
+**Rules for `main`.** Two GitHub rulesets protect the repository:
+- **main:** changes go through a pull request (no approval needed, since GitHub doesn't let you approve
+  your own), **CI result** must pass, and `main` can't be force-pushed or deleted. Repository admins can
+  bypass the rules, for urgent fixes.
+- **release tags:** `v*` tags can't be deleted or moved once released.
+
+**Build cache.** Both workflows cache the `.build` folder. The cache key changes only when the
+third-party build inputs change: the Xcode version, the Dear ImGui submodule commit, `Package.swift`
+or the ImGui wrapper targets. Changes to the Swift code reuse the cache, so Dear ImGui isn't
+recompiled.
+
+A fresh checkout normally makes every file look new, which would force a full rebuild anyway.
+`scripts/ci-restore-mtimes.sh` sets each file's time to its last commit first. On this project,
+a release build with a restored cache took 6 s, against 106 s from scratch.
+
+To build a release zip locally:
+
+```bash
+./scripts/package-release.sh v0.1.0          # this Mac's architecture
+./scripts/package-release.sh v0.1.0 arm64    # dist/RenderLab-v0.1.0-macos-arm64.zip  (Apple Silicon)
+./scripts/package-release.sh v0.1.0 x86_64   # dist/RenderLab-v0.1.0-macos-x86_64.zip (Intel)
+```
+
+Either architecture can be built on either Mac, but only a Mac of that type can run it.
+
 ## What to experiment with
 
 The test scene is two overlapping triangles, set up so each toggle has a visible effect:
@@ -126,7 +181,8 @@ Sources/
   RenderLab/       Executable entry point (main.swift)
 Tests/RenderLabCoreTests/
 ThirdParty/imgui/  Dear ImGui git submodule
-scripts/           doctor.sh
+scripts/           doctor.sh, next-version.sh, package-release.sh, ci-restore-mtimes.sh, code-changes.sh
+.github/           CI and nightly release workflows, shared Swift setup + cache action
 run.sh             one-step setup + run / test
 ```
 

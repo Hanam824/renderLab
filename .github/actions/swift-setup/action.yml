@@ -1,0 +1,46 @@
+name: Swift setup
+description: Select Xcode, give files their commit times and restore the cached .build folder.
+
+inputs:
+  cache-name:
+    description: Keeps the caches of different workflows apart (their .build contents differ).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Select the latest stable Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Show toolchain
+      shell: bash
+      run: |
+        xcodebuild -version
+        swift --version
+
+    # A fresh checkout makes every file look new, so SwiftPM would recompile everything even with
+    # a cached .build. Commit-based file times keep unchanged files (all of Dear ImGui) up to date.
+    - name: Restore file times from git history
+      shell: bash
+      run: ./scripts/ci-restore-mtimes.sh
+
+    - name: Compute cache key parts
+      id: key
+      shell: bash
+      run: |
+        echo "xcode=$(xcodebuild -version | head -n 1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+        echo "imgui=$(git rev-parse HEAD:ThirdParty/imgui)" >> "$GITHUB_OUTPUT"
+
+    # The key changes only when the third-party build inputs change: the Xcode version, the ImGui
+    # submodule commit, Package.swift or the C/C++ wrapper targets. Changes to our Swift code reuse
+    # the cache and recompile just those files. On a key change, restore-keys falls back to the
+    # newest older cache, and the job saves a new one under the new key.
+    - name: Cache .build
+      uses: actions/cache@v4
+      with:
+        path: .build
+        key: spm-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.xcode }}-imgui-${{ steps.key.outputs.imgui }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/CImGui/**', 'Sources/ImGuiMetal/**') }}
+        restore-keys: |
+          spm-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.xcode }}-
