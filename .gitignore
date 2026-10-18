@@ -43,3 +43,6 @@ fastlane/test_output
 
 # Code Injection
 iOSInjectionProject/
+
+# Release packages (scripts/package-release.sh)
+dist/

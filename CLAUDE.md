@@ -21,6 +21,8 @@ swift run RenderLab --backend metal --frames 120   # smoke test: render N frames
 swift test                                # Swift Testing; needs Xcode's toolchain (see below)
 swift test --filter BackendTests          # one suite; --filter "parsesMetal" for one test
 git submodule update --init               # ThirdParty/imgui
+./scripts/next-version.sh                 # next release tag: v0.1.0 first, then the last v* tag's patch + 1
+./scripts/package-release.sh v0.1.0 [arm64|x86_64]   # release zip for one architecture in dist/ (default: this Mac's)
 ```
 
 On this machine `xcode-select` points to the Command Line Tools, and `swift test` fails there with `no such module 'Testing'`. Run tests as `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`. `swift build` and `swift run` work with either toolchain.
@@ -49,6 +51,21 @@ Verify rendering with `--frames N` on both backends. Screen capture isn't availa
 - **Metal.** Shaders are Metal Shading Language in `Shaders/metal/*.metal`, compiled at runtime with `device.makeLibrary(source:)`: the Command Line Tools have no `metal` compiler, so don't add build-time `.metal` compilation. Clip space has Y up like OpenGL (no flip); depth range is 0..1. Metal's default front face is clockwise, so `MetalRenderer` sets `.counterClockwise` to keep CCW = front in both engines. ImGui's Metal backend doesn't reset the triangle fill mode, so reset it to `.fill` after the scene.
 - No Vulkan: it ran through MoltenVK (a translation layer to Metal) and was no faster than Metal on this project, so it was removed.
 - Commit `Package.resolved` if one appears. It is deliberately not in `.gitignore`.
+
+## CI and releases
+
+- `.github/workflows/ci.yml`: on PRs to main and pushes to main. It's a matrix of `macos-26` (arm64) and `macos-15-intel` (x86_64) with the latest stable Xcode, and `fail-fast` off. Each runs doctor --quick, a debug build, `swift test` and a release build. On the runners, Metal tests run but OpenGL tests skip themselves (no GL context in the VM).
+  - Jobs: `changes` (Ubuntu) → `build` (matrix, skipped by `if:` when only docs changed) → `CI result`.
+  - `CI result` always runs and fails only if `changes` failed or `build` didn't succeed or skip. It is the **required status check** in the `main` ruleset.
+  - Don't make the matrix jobs required: a skipped matrix job reports under its unexpanded name, so the check would never arrive. Don't switch back to `paths-ignore` either: a workflow that doesn't run leaves the required check pending forever.
+- `scripts/code-changes.sh <git diff args>` lists changed files minus docs (`*.md` anywhere, `doc/`, `docs/`, `LICENSE`). Both CI's `changes` job and `next-version.sh` use it, so the doc list lives in one place.
+- Rulesets (Settings → Rules):
+  - **main:** PR required (0 approvals), `CI result` required (GitHub Actions), no force push, no deletion, repository admins can bypass.
+  - **release tags:** `refs/tags/v*` can't be deleted, moved or force-updated.
+- `.github/workflows/nightly-release.yml`: 17:00 UTC (00:00 Vietnam). Jobs: `check` (was a PR merged into main in the last 24 h, or a manual run with `force`) → `version` (`next-version.sh` once, plus the commit SHA) → `build` (a matrix of arm64 and x86_64 runners, each tests and runs `package-release.sh <tag> <arch>`, then uploads its zip) → `publish` (only if both builds passed: `gh release create --generate-notes` with `RenderLab-<tag>-macos-arm64.zip` and `-macos-x86_64.zip`).
+- `.github/actions/swift-setup` is shared by both: Xcode selection, `scripts/ci-restore-mtimes.sh`, then `actions/cache` on `.build`. The key covers only the third-party build inputs (Xcode, ImGui submodule SHA, Package.swift, `Sources/CImGui`, `Sources/ImGuiMetal`). The mtime restore is what makes the cache work: without it a fresh checkout recompiles everything. Keep checkouts at `fetch-depth: 0` so it can find each file's last commit.
+- `next-version.sh` also says "nothing to release" when only docs changed since the last tag (via `code-changes.sh`).
+- Nightly releases always bump the patch number (v0.1.0 → v0.1.1 → … → v0.1.1000), whatever the commit types. Minor and major versions change only when a tag such as `v0.2.0` is pushed by hand; the nightly releases then continue from it.
 
 ## Repo
 

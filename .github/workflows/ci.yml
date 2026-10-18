@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # Builds on main keep a warm cache: a pull request can restore caches from main, not from other PRs.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same pull request cancels the run that is still going.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Doc-only changes don't need a build, but the workflow still runs: `CI result` is a required check on
+# main, and a check that never reports would block the merge forever. Instead, `changes` looks at the
+# changed files (scripts/code-changes.sh decides what counts as docs) and `build` is skipped when
+# only docs changed. `CI result` then passes, because a job skipped by `if:` doesn't count as a failure.
+jobs:
+  changes:
+    name: Code changed?
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # history to diff against
+
+      - name: Look for non-doc changes
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            # Three dots: changes on the PR branch since it split from main.
+            pull_request) range=("$PR_BASE...HEAD") ;;
+            push) range=("$PUSH_BEFORE" HEAD) ;;
+            *) range=() ;; # manual run: always build
+          esac
+          # A brand-new branch has no "before" commit (all zeros): build.
+          if [ ${#range[@]} -eq 0 ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          elif files="$(./scripts/code-changes.sh "${range[@]}")" && [ -z "$files" ]; then
+            echo "Only docs changed: skipping the build."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Changed files that need a build:\n%s\n' "$files"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and test (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    # Apple Silicon and Intel in parallel. fail-fast off: one failing doesn't cancel the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-15-intel # GitHub's Intel macOS runner
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: ci-restore-mtimes.sh needs each file's last commit
+          submodules: recursive
+
+      - name: Set up Swift and the build cache
+        uses: ./.github/actions/swift-setup
+        with:
+          cache-name: ci
+
+      - name: System check
+        run: ./scripts/doctor.sh --quick
+
+      - name: Build (debug)
+        run: swift build
+
+      # GPU tests skip themselves if the runner has no OpenGL context or Metal device.
+      - name: Test
+        run: swift test
+
+      - name: Build (release)
+        run: swift build -c release
+
+  # The one check the main branch ruleset requires. It always runs, and passes when the builds
+  # passed or were skipped (docs-only change). Matrix job names can't be required reliably:
+  # a skipped matrix job reports under its unexpanded name.
+  result:
+    name: CI result
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the build jobs
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "changes: $CHANGES, build: $BUILD"
+          if [ "$CHANGES" != "success" ]; then exit 1; fi
+          case "$BUILD" in
+            success | skipped) ;;
+            *) exit 1 ;;
+          esac
